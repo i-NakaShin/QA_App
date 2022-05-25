@@ -161,7 +161,7 @@ class FavoriteActivity : AppCompatActivity() {
         //ActionBarを設定する
         if (supportActionBar != null) {
             supportActionBar!!.setDisplayHomeAsUpEnabled(true)
-            supportActionBar!!.title = getString(R.string.menu_favorite_label)
+            title = getString(R.string.menu_favorite_label)
         }
 
         // Firebase
