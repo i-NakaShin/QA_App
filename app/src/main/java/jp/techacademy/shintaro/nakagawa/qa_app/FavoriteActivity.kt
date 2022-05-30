@@ -5,9 +5,7 @@ import android.os.Bundle
 import android.util.Base64
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import android.view.Menu
 import android.view.MenuItem
-import android.view.View
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.GravityCompat
@@ -15,6 +13,8 @@ import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.*
 // findViewById()を呼び出さずに該当Viewを取得するために必要となるインポート宣言
 import kotlinx.android.synthetic.main.activity_question_detail.*
 import kotlinx.android.synthetic.main.app_bar_main.*
@@ -30,128 +30,13 @@ class FavoriteActivity : AppCompatActivity() {
     private lateinit var mDatabaseReference: DatabaseReference
     private lateinit var mQuestionArrayList: ArrayList<Question>
     private lateinit var mAdapter: QuestionsListAdapter
+    private lateinit var mQuestion: Question
 
-    private  var mFavoriteMap = mutableMapOf<String, String>()
     private var questionUid: String? = null
     private var genre: String? = null
     private var mGenreRef: DatabaseReference? = null
 
-    private val mEventListener = object : ChildEventListener {
-        override fun onChildAdded(dataSnapshot: DataSnapshot, s: String?) {
-            var hasFavorite: Boolean = false
-            var favoriteGenre: Int = 0
-
-            for (i in mFavoriteMap) {
-                if (dataSnapshot.key == i.key) {
-                    hasFavorite = true
-                    favoriteGenre = i.value.toInt()
-                    break
-                }
-            }
-
-            if (!hasFavorite) return
-            for (question in mQuestionArrayList) {
-                if (dataSnapshot.key == question.questionUid) return
-            }
-
-            val map = dataSnapshot.value as Map<String, String>
-            val title = map["title"] ?: ""
-            val body = map["body"] ?: ""
-            val name = map["name"] ?: ""
-            val uid = map["uid"] ?: ""
-            val imageString = map["image"] ?: ""
-            val bytes =
-                if (imageString.isNotEmpty()) {
-                    Base64.decode(imageString, Base64.DEFAULT)
-                } else {
-                    byteArrayOf()
-                }
-
-            val answerArrayList = ArrayList<Answer>()
-            val answerMap = map["answers"] as Map<String, String>?
-            if (answerMap != null) {
-                for (key in answerMap.keys) {
-                    val temp = answerMap[key] as Map<String, String>
-                    val answerBody = temp["body"] ?: ""
-                    val answerName = temp["name"] ?: ""
-                    val answerUid = temp["uid"] ?: ""
-                    val answer = Answer(answerBody, answerName, answerUid, key)
-                    answerArrayList.add(answer)
-                }
-            }
-
-            val question = Question(title, body, name, uid, dataSnapshot.key ?: "",
-                favoriteGenre, bytes, answerArrayList)
-            mQuestionArrayList.add(question)
-            mAdapter.notifyDataSetChanged()
-        }
-
-
-
-        override fun onChildChanged(dataSnapshot: DataSnapshot, s: String?) {
-            val map = dataSnapshot as Map<String, String>
-
-            // 変更があったQuestionを探す
-            for (question in mQuestionArrayList) {
-                if (dataSnapshot.key.equals(question.questionUid)) {
-                    // このアプリで変更がある可能性があるのは回答（Answer)のみ
-                    question.answers.clear()
-                    val answerMap = map["answers"] as Map<String, String>?
-                    if (answerMap != null) {
-                        for (key in answerMap.keys) {
-                            val temp = answerMap[key] as Map<String, String>
-                            val answerBody = temp["body"] ?: ""
-                            val answerName = temp["name"] ?: ""
-                            val answerUid = temp["uid"] ?: ""
-                            val answer = Answer(answerBody, answerName, answerUid, key)
-                            question.answers.add(answer)
-                        }
-                    }
-
-                    mAdapter.notifyDataSetChanged()
-                }
-            }
-        }
-
-        override fun onChildRemoved(p0: DataSnapshot) {
-
-        }
-
-        override fun onChildMoved(p0: DataSnapshot, p1: String?) {
-
-        }
-
-        override fun onCancelled(p0: DatabaseError) {
-
-        }
-    }
-
-    private val mfavListener = object : ChildEventListener {
-        override fun onChildAdded(dataSnapshot: DataSnapshot, s: String?) {
-            questionUid = dataSnapshot.key as String ?:""
-            genre = dataSnapshot.value as String ?:""
-
-            mFavoriteMap.plusAssign(questionUid.toString() to genre.toString())
-            val qidRef = mDatabaseReference.child(ContentsPATH).child(genre.toString())
-            qidRef.addChildEventListener(mEventListener)
-        }
-
-        override fun onChildChanged(dataSnapshot: DataSnapshot, s: String?) {
-
-        }
-
-        override fun onChildRemoved(dataSnapshot: DataSnapshot) {
-
-        }
-
-        override fun onChildMoved(dataSnapshot: DataSnapshot, s: String?) {
-
-        }
-
-        override fun onCancelled(databaseError: DatabaseError) {
-
-        }
-    }
+    var favoriteList = mutableListOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -188,16 +73,90 @@ class FavoriteActivity : AppCompatActivity() {
         if (user == null) {
             finish()
         }
+        
+        val favDb = FirebaseFirestore.getInstance()
+        favDb.collection(FavoritePATH)
+            .document(user!!.uid)
+            .get()
+            .addOnCompleteListener {
+                if (it.isSuccessful && it.result.data?.get(user!!.uid) != null) {
+                    favoriteList = it.result.data?.get(user!!.uid) as MutableList<String>
+                    Log.d("kotlintest", favoriteList[0])
+                    Log.d("kotlintest", "fav list")
 
-        // 質問のリストをクリアしてから再度Adapterにセットし、AdapterをListViewにセットし直す
-        mFavoriteMap.clear()
-        mQuestionArrayList.clear()
-        mAdapter.setQuestionArrayList(mQuestionArrayList)
-        listView.adapter = mAdapter
+                    mQuestionArrayList.clear()
+                    mAdapter.setQuestionArrayList(mQuestionArrayList)
+                    listView.adapter = mAdapter
 
-        mGenreRef = mDatabaseReference.child(FavoritePATH).child(user!!.uid)
-        mGenreRef!!.addChildEventListener(mfavListener)
+                    val db = FirebaseFirestore.getInstance()
+                    if (favoriteList != null) {
+                        Log.d("kotlintest", "not null")
+                        for (qid in favoriteList) {
+                            Log.d("kotlintest", qid)
+                            db.collection(ContentsPATH)
+                                .document(qid)
+                                .get()
+                                .addOnCompleteListener {
+                                    if (it.isSuccessful) {
+                                        val fQuestion = it.result.toObject(FireStoreQuestion::class.java)
+                                        val bytes =
+                                            if (fQuestion!!.image.isNotEmpty()) {
+                                                Base64.decode(fQuestion.image, Base64.DEFAULT)
+                                            } else {
+                                                byteArrayOf()
+                                            }
+                                        val question = Question(
+                                            fQuestion.title, fQuestion.body, fQuestion.name, fQuestion.uid,
+                                            fQuestion.id, fQuestion.genre, bytes, fQuestion.answers
+                                        )
+                                        mQuestionArrayList.add(question)
+                                    } else {
+                                        finish()
+                                    }
+                                    mAdapter.notifyDataSetChanged()
+                                }
+
+                        }
+                    }
+                }
+            }
+
+//        mQuestionArrayList.clear()
+//        mAdapter.setQuestionArrayList(mQuestionArrayList)
+//        listView.adapter = mAdapter
+
+//        val db = FirebaseFirestore.getInstance()
+//        if (favoriteList != null) {
+//            Log.d("kotlintest", "not null")
+//            for (qid in favoriteList) {
+//                Log.d("kotlintest", qid)
+//                db.collection(ContentsPATH)
+//                    .document(qid)
+//                    .get()
+//                    .addOnCompleteListener {
+//                        if (it.isSuccessful) {
+//                            val fQuestion = it.result.toObject(FireStoreQuestion::class.java)
+//                            val bytes =
+//                                if (fQuestion!!.image.isNotEmpty()) {
+//                                    Base64.decode(fQuestion.image, Base64.DEFAULT)
+//                                } else {
+//                                    byteArrayOf()
+//                                }
+//                            val question = Question(
+//                                fQuestion.title, fQuestion.body, fQuestion.name, fQuestion.uid,
+//                                fQuestion.id, fQuestion.genre, bytes, fQuestion.answers
+//                            )
+//                            mQuestionArrayList.add(question)
+//                        } else {
+//                            finish()
+//                        }
+//                    }
+//                
+//            }
+//        }
+
     }
+
     // --- ここまで追加する ---
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

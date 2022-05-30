@@ -21,13 +21,12 @@ import android.view.inputmethod.InputMethodManager
 import androidx.preference.PreferenceManager
 import com.google.android.material.snackbar.Snackbar
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.android.synthetic.main.activity_question_send.*
 import java.io.ByteArrayOutputStream
 
-class QuestionSendActivity : AppCompatActivity(), View.OnClickListener, DatabaseReference.CompletionListener {
+class QuestionSendActivity : AppCompatActivity(), View.OnClickListener {
     companion object {
         private val PERMISSIONS_REQUEST_CODE = 100
         private val CHOOSER_REQUEST_CODE = 100
@@ -115,14 +114,6 @@ class QuestionSendActivity : AppCompatActivity(), View.OnClickListener, Database
             val im = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             im.hideSoftInputFromWindow(v.getWindowToken(), InputMethodManager.HIDE_NOT_ALWAYS)
 
-            val dataBaseReference = FirebaseDatabase.getInstance().reference
-            val genreRef = dataBaseReference.child(ContentsPATH).child(mGenre.toString())
-
-            val data = HashMap<String, String>()
-
-            // UID
-            data["uid"] = FirebaseAuth.getInstance().currentUser!!.uid
-
             // タイトルと本文を取得する
             val title = titleText.text.toString()
             val body = bodyText.text.toString()
@@ -143,9 +134,14 @@ class QuestionSendActivity : AppCompatActivity(), View.OnClickListener, Database
             val sp = PreferenceManager.getDefaultSharedPreferences(this)
             val name = sp.getString(NameKEY, "")
 
-            data["title"] = title
-            data["body"] = body
-            data["name"] = name!!
+            // FirestoreQuestionのインスタンスを作成し、値を詰めていく
+            var fireStoreQuestion = FireStoreQuestion()
+
+            fireStoreQuestion.uid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+            fireStoreQuestion.title = title
+            fireStoreQuestion.body = body
+            fireStoreQuestion.name = name!!
+            fireStoreQuestion.genre = mGenre
 
             // 添付画像を取得する
             val drawable = imageView.drawable as? BitmapDrawable
@@ -156,17 +152,26 @@ class QuestionSendActivity : AppCompatActivity(), View.OnClickListener, Database
                 val baos = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
                 val bitmapString = Base64.encodeToString(baos.toByteArray(), Base64.DEFAULT)
-
-                data["image"] = bitmapString
+                fireStoreQuestion.image = bitmapString
             }
-
-            genreRef.push().setValue(data, this)
             progressBar.visibility = View.VISIBLE
+            FirebaseFirestore.getInstance()
+                .collection(ContentsPATH)
+                .document(fireStoreQuestion.id)
+                .set(fireStoreQuestion)
+                .addOnSuccessListener {
+                    progressBar.visibility = View.GONE
+                    finish()
+                }
+                .addOnFailureListener {
+                    it.printStackTrace()
+                    progressBar.visibility = View.GONE
+                    Snackbar.make(findViewById(android.R.id.content), getString(R.string.question_send_error_message), Snackbar.LENGTH_LONG).show()
+                }
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
             PERMISSIONS_REQUEST_CODE -> {
                 if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -198,19 +203,9 @@ class QuestionSendActivity : AppCompatActivity(), View.OnClickListener, Database
         // ギャラリー選択のIntentを与えてcreateChooserメソッドを呼ぶ
         val chooserIntent = Intent.createChooser(galleryIntent, getString(R.string.get_image))
 
-        // EXTRA_INITIAL_INTENTSにカメラ撮影のIntentを追加
+        // EXTRA_INITIAL_INTENTS にカメラ撮影のIntentを追加
         chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
 
         startActivityForResult(chooserIntent, CHOOSER_REQUEST_CODE)
-    }
-
-    override fun onComplete(databaseError: DatabaseError?, databaseReference: DatabaseReference) {
-        progressBar.visibility = View.GONE
-
-        if (databaseError == null) {
-            finish()
-        } else {
-            Snackbar.make(findViewById(android.R.id.content), getString(R.string.question_send_error_message), Snackbar.LENGTH_LONG).show()
-        }
     }
 }
